@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>QR Code Scanner Payment & Generator</title>
+
+<!-- QR Code Generator Library -->
+<script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.1/build/qrcode.min.js"></script>
+
+<!-- QR Code Scanner Library -->
+<script src="https://unpkg.com/html5-qrcode@2.3.7/minified/html5-qrcode.min.js"></script>
+
+<style>
+  body {
+    font-family: Arial, sans-serif;
+    background: #f0f4f8;
+    margin: 0;
+    padding: 20px;
+    display: flex;
+    justify-content: center;
+    min-height: 100vh;
+    align-items: center;
+  }
+  .container {
+    background: white;
+    max-width: 480px;
+    width: 100%;
+    border-radius: 10px;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+    padding: 20px;
+  }
+  h1 {
+    color: #2563eb;
+    text-align: center;
+    margin-bottom: 1rem;
+  }
+  p {
+    color: #475569;
+    margin-bottom: 1rem;
+    text-align: center;
+  }
+  #scannerSection, #generatorSection {
+    display: none;
+  }
+  #scannerSection.active, #generatorSection.active {
+    display: block;
+  }
+  #reader {
+    width: 100%;
+    margin: 0 auto 1rem auto;
+  }
+  button {
+    background-color: #2563eb;
+    color: white;
+    border: none;
+    padding: 12px 20px;
+    border-radius: 6px;
+    font-size: 1rem;
+    cursor: pointer;
+    width: 100%;
+    margin-top: 10px;
+  }
+  button:disabled {
+    background-color: #94a3b8;
+    cursor: not-allowed;
+  }
+  input[type="url"] {
+    width: 100%;
+    padding: 10px;
+    font-size: 1rem;
+    border-radius: 6px;
+    border: 1px solid #cbd5e1;
+    margin-bottom: 10px;
+  }
+  #qrcode {
+    margin: 20px auto;
+    width: 200px;
+    height: 200px;
+  }
+  .info {
+    background-color: #e0f2fe;
+    color: #0369a1;
+    padding: 10px;
+    border-radius: 6px;
+    margin-bottom: 15px;
+    text-align: center;
+  }
+  .error {
+    background-color: #fee2e2;
+    color: #b91c1c;
+    padding: 10px;
+    border-radius: 6px;
+    margin-bottom: 15px;
+    text-align: center;
+  }
+  .countdown {
+    font-weight: bold;
+  }
+</style>
+</head>
+<body>
+  <div class="container">
+    <!-- Scanner & Payment Section -->
+    <section id="scannerSection" class="active">
+      <h1>Scan to Pay ₹30</h1>
+      <p>Scan the payment QR code below to pay ₹30 and get 7-day access.</p>
+      <div id="reader"></div>
+      <p><strong>OR</strong></p>
+      <p style="text-align:center;">You can also scan your payment QR code using your phone camera.</p>
+      <div class="info" id="scanResult">Waiting for scan...</div>
+      <button id="confirmPaymentBtn" disabled>Confirm Payment</button>
+    </section>
+
+    <!-- QR Code Generator Section -->
+    <section id="generatorSection">
+      <h1>QR Code Generator</h1>
+      <div class="info" id="accessInfo">Access valid for <span id="countdown" class="countdown"></span></div>
+      <input type="url" id="urlInput" placeholder="Enter URL here" />
+      <button id="generateBtn">Generate QR Code</button>
+      <div id="qrcode"></div>
+      <button id="downloadBtn" style="display:none;">Download QR Code</button>
+      <button id="logoutBtn" style="margin-top: 15px; background-color: #ef4444;">Logout / Reset Access</button>
+    </section>
+  </div>
+
+<script>
+  // Constants
+  const PAYMENT_AMOUNT = 30; // ₹30
+  const ACCESS_DAYS = 7; // 7 days access
+
+  // Elements
+  const scannerSection = document.getElementById('scannerSection');
+  const generatorSection = document.getElementById('generatorSection');
+  const scanResult = document.getElementById('scanResult');
+  const confirmPaymentBtn = document.getElementById('confirmPaymentBtn');
+  const urlInput = document.getElementById('urlInput');
+  const generateBtn = document.getElementById('generateBtn');
+  const qrcodeDiv = document.getElementById('qrcode');
+  const downloadBtn = document.getElementById('downloadBtn');
+  const accessInfo = document.getElementById('accessInfo');
+  const countdownEl = document.getElementById('countdown');
+  const logoutBtn = document.getElementById('logoutBtn');
+
+  // Storage key
+  const STORAGE_KEY = 'qrPaymentAccess';
+
+  // Variables
+  let lastScannedText = null;
+  let html5QrcodeScanner;
+
+  // Initialize
+  function init() {
+    const accessData = getAccessData();
+    if (accessData && accessData.expiry > Date.now()) {
+      // Access valid
+      showGenerator();
+      startCountdown(accessData.expiry);
+    } else {
+      // No valid access
+      clearAccessData();
+      showScanner();
+    }
+  }
+
+  // Show scanner section
+  function showScanner() {
+    scannerSection.classList.add('active');
+    generatorSection.classList.remove('active');
+    startScanner();
+  }
+
+  // Show generator section
+  function showGenerator() {
+    scannerSection.classList.remove('active');
+    generatorSection.classList.add('active');
+  }
+
+  // Get access data from localStorage
+  function getAccessData() {
+    const data = localStorage.getItem(STORAGE_KEY);
+    if (!data) return null;
+    try {
+      return JSON.parse(data);
+    } catch {
+      return null;
+    }
+  }
+
+  // Save access data to localStorage
+  function saveAccessData(expiryTimestamp) {
+    const data = {
+      expiry: expiryTimestamp
+    };
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+  }
+
+  // Clear access data
+  function clearAccessData() {
+    localStorage.removeItem(STORAGE_KEY);
+  }
+
+  // Start QR code scanner
+  function startScanner() {
+    if (html5QrcodeScanner) {
+      html5QrcodeScanner.clear().catch(e => console.warn(e));
+    }
+    html5QrcodeScanner = new Html5Qrcode("reader");
+
+    const config = { fps: 10, qrbox: 250 };
+
+    html5QrcodeScanner.start(
+      { facingMode: "environment" },
+      config,
+      qrCodeMessage => {
+        // On successful scan
+        if (qrCodeMessage !== lastScannedText) {
+          lastScannedText = qrCodeMessage;
+          scanResult.textContent = `Scanned QR Code: ${qrCodeMessage}`;
+          confirmPaymentBtn.disabled = false;
+        }
+      },
+      errorMessage => {
+        // ignore scan errors for now
+      }
+    ).catch(err => {
+      scanResult.textContent = "Camera permission denied or no camera found.";
+      confirmPaymentBtn.disabled = true;
+    });
+  }
+
+  // Stop scanner
+  function stopScanner() {
+    if (html5QrcodeScanner) {
+      html5QrcodeScanner.stop().then(() => {
+        html5QrcodeScanner.clear();
+      }).catch(e => console.warn(e));
+    }
+  }
+
+  // Confirm payment button click
+  confirmPaymentBtn.addEventListener('click', () => {
+    if (!lastScannedText) {
+      alert("Please scan the payment QR code first.");
+      return;
+    }
+
+    // Here you would verify the payment with your backend or payment gateway.
+    // For this demo, we simulate payment verification by checking if scanned QR code contains "pay30" keyword.
+    // Replace this logic with your actual payment verification.
+
+    if (lastScannedText.toLowerCase().includes("pay30")) {
+      alert("Payment verified successfully! You now have 7-day access.");
+      const expiry = Date.now() + ACCESS_DAYS * 24 * 60 * 60 * 1000;
+      saveAccessData(expiry);
+      stopScanner();
+      showGenerator();
+      startCountdown(expiry);
+    } else {
+      alert("Invalid payment QR code. Please scan the correct payment QR code.");
+    }
+  });
+
+  // Generate QR code button click
+  generateBtn.addEventListener('click', () => {
+    const url = urlInput.value.trim();
+    if (!url) {
+      alert("Please enter a valid URL.");
+      return;
+    }
+    // Clear previous QR code
+    qrcodeDiv.innerHTML = "";
+    downloadBtn.style.display = "none";
+
+    QRCode.toCanvas(url, { width: 200, margin: 1 }, (error, canvas) => {
+      if (error) {
+        alert("Failed to generate QR code.");
+        return;
+      }
+      qrcodeDiv.appendChild(canvas);
+      downloadBtn.style.display = "block";
+    });
+  });
+
+  // Download QR code button click
+  downloadBtn.addEventListener('click', () => {
+    const canvas = qrcodeDiv.querySelector('canvas');
+    if (!canvas) return;
+    const link = document.createElement('a');
+    link.href = canvas.toDataURL("image/png");
+    link.download = "qrcode.png";
+    link.click();
+  });
+
+  // Logout / Reset access button
+  logoutBtn.addEventListener('click', () => {
+    if (confirm("Are you sure you want to reset your access? You will need to pay again.")) {
+      clearAccessData();
+      location.reload();
+    }
+  });
+
+  // Countdown timer for access expiry
+  function startCountdown(expiryTimestamp) {
+    function update() {
+      const now = Date.now();
+      const diff = expiryTimestamp - now;
+      if (diff <= 0) {
+        accessInfo.textContent = "Your access has expired. Please pay again.";
+        clearAccessData();
+        showScanner();
+        return;
+      }
+      const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+      const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+      const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+      const seconds = Math.floor((diff % (1000 * 60)) / 1000);
+      countdownEl.textContent = `${days}d ${hours}h ${minutes}m ${seconds}s`;
+      setTimeout(update, 1000);
+    }
+    update();
+  }
+
+  // Initialize on page load
+  window.onload = init;
+</script>
+create a page where for entering the page first u have to to pay 30rupees on the given phone number  and after the payment is successful that u can use it for 7 days , after payment is done  the page  will display where u can generate QR code using url ,create using HTML ,CSS and javascript. give coding</body>
+</html>
